@@ -1,0 +1,10 @@
+GROQ_API_KEY=
+gemini_api_key=
+DATABASE_URL=
+SYNC_DATABASE_URL=
+MILVUS_URI=
+
+CHUNK_JSON_FILE=structured_chunks.json
+INGESTION_LOG_FILE=ingestion_log.json
+COLLECTION_NAME=knowledge_base_v1
+EMBEDDING_MODEL=all-MiniLM-L12-v2

@@ -1,0 +1,47 @@
+# Environment and credentials
+.env
+.env.local
+.env.*.local
+
+# Logs and data
+ingestion_log.json
+temp.json
+*.log
+
+# Generated directories
+citations/
+utils/data/output/
+scripts
+
+# Virtual environments
+myenv/
+venv/
+env/
+.venv/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+test_mem0.py
+test_run.py
