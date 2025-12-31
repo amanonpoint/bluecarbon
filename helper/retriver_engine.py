@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 
 from pymilvus import connections, Collection
 from langchain_huggingface import HuggingFaceEmbeddings  # ← ye use karo
+import numpy as np
 
 
 
@@ -35,10 +36,10 @@ class RetrieverEngine:
             "total_chunks_retrieved": len(primary),
         }
 
-    # ---- internal ----
-    def _embed_query(self, text: str) -> List[float]:
-        vec = self.embedder.encode(text)
-        return vec.tolist()
+    # # ---- internal ----
+    # def _embed_query(self, text: str) -> List[float]:
+    #     vec = self.embedder.encode(text)
+    #     return vec.tolist()
 
 
     def search_similar_chunks(self, query: str, limit: int = 10):
@@ -48,8 +49,8 @@ class RetrieverEngine:
             data=[query_embedding],
             anns_field="vector",
             param={"params": {"nprobe": 10}},
-            limit=limit,  # ✅ Dynamic limit
-            output_fields=["text", "header", "subheader", "page", "chunk_id", "file_id", "chunk_size"]
+            limit=limit, 
+            output_fields=["text", "header", "subheader", "page", "chunk_id", "file_id", "chunk_size", "file_path"]
         )
         
         chunks = []
@@ -65,59 +66,88 @@ class RetrieverEngine:
                         "page": hit.entity.get("page", ""),
                         "chunk_id": hit.entity.get("chunk_id", ""),
                         "file_id": hit.entity.get("file_id", ""),
+                        "file_path": hit.entity.get("file_path", ""),
                         "chunk_size": hit.entity.get("chunk_size", 0),
                     }
                 })
         return chunks
-
-
-
-    def _augment_by_header(self, primary: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Fetch more chunks with same file_id+header as top hit."""
-        if not primary:
-            return []
-
-        top = primary[0]["metadata"]
-        file_id = top.get("file_id")
-        header = top.get("header")
-
-        expr_parts = []
-        if file_id:
-            expr_parts.append(f'metadata["file_id"] == "{file_id}"')
-        if header:
-            expr_parts.append(f'metadata["header"] == "{header}"')
-        if not expr_parts:
-            return primary
-
-        expr = " and ".join(expr_parts)
-
-        extra = self.collection.query(
-            expr=expr,
-            output_fields=["text", "metadata"],
-            limit=20,
-        )
-
-        existing_ids = {
-            c["metadata"].get("chunk_id") for c in primary if c["metadata"].get("chunk_id")
-        }
-        for e in extra:
-            md = e.get("metadata", {})
-            if md.get("chunk_id") in existing_ids:
-                continue
-            primary.append(
-                {
-                    "text": e.get("text", ""),
-                    "metadata": md,
-                    "similarity_score": 0.0,  # treat as context, not ranked
-                }
-            )
-
-        return primary
     
-    # helper/retriver_engine.py ke andar
-    def get_chunks_for_query(self, query: str):
-        """Legacy method for tools"""
-        ctx = self.get_retrieval_context(query)
-        return ctx["chunks"]
+    def compute_chunk_similarity(
+        self,
+        text_a: str,
+        text_b: str
+    ) -> float:
+        """
+        Compute cosine similarity between two chunk texts.
 
+        Returns:
+            float: similarity score between 0.0 and 1.0
+        """
+
+        if not text_a or not text_b:
+            return 0.0
+
+        # Embed texts
+        emb_a = np.array(self.embedding_model.embed_query(text_a))
+        emb_b = np.array(self.embedding_model.embed_query(text_b))
+
+        # Cosine similarity
+        denom = np.linalg.norm(emb_a) * np.linalg.norm(emb_b)
+        if denom == 0:
+            return 0.0
+
+        similarity = float(np.dot(emb_a, emb_b) / denom)
+
+        # Optional clamp for numerical stability
+        return max(0.0, min(1.0, similarity))
+
+
+
+    # def _augment_by_header(self, primary: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    #     """Fetch more chunks with same file_id+header as top hit."""
+    #     if not primary:
+    #         return []
+
+    #     top = primary[0]["metadata"]
+    #     file_id = top.get("file_id")
+    #     header = top.get("header")
+
+    #     expr_parts = []
+    #     if file_id:
+    #         expr_parts.append(f'metadata["file_id"] == "{file_id}"')
+    #     if header:
+    #         expr_parts.append(f'metadata["header"] == "{header}"')
+    #     if not expr_parts:
+    #         return primary
+
+    #     expr = " and ".join(expr_parts)
+
+    #     extra = self.collection.query(
+    #         expr=expr,
+    #         output_fields=["text", "metadata"],
+    #         limit=20,
+    #     )
+
+    #     existing_ids = {
+    #         c["metadata"].get("chunk_id") for c in primary if c["metadata"].get("chunk_id")
+    #     }
+    #     for e in extra:
+    #         md = e.get("metadata", {})
+    #         if md.get("chunk_id") in existing_ids:
+    #             continue
+    #         primary.append(
+    #             {
+    #                 "text": e.get("text", ""),
+    #                 "metadata": md,
+    #                 "similarity_score": 0.0,  # treat as context, not ranked
+    #             }
+    #         )
+
+    #     return primary
+    
+    # # helper/retriver_engine.py ke andar
+    # def get_chunks_for_query(self, query: str):
+    #     """Legacy method for tools"""
+    #     ctx = self.get_retrieval_context(query)
+    #     return ctx["chunks"]
 

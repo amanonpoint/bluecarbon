@@ -42,6 +42,7 @@ async def process_query(request: QueryRequest):
             session_id=request.session_id,
             user_id=request.user_id
         )
+        print(result)
         
         # Save to database
         await SessionManager.add_message(
@@ -56,8 +57,8 @@ async def process_query(request: QueryRequest):
             content=result["answer"],
             metadata={
                 "citation_required": result["citation_required"],
-                "citation_limit": result["citation_limit"],
-                "files_used": result["files_used"],
+                # "citation_limit": result["citation_limit"],
+                # "files_used": result["files_used"],
                 "citations": result["citations"],
                 "memory_used": result["memory_used"],
             }
@@ -68,8 +69,8 @@ async def process_query(request: QueryRequest):
             query=result["query"],
             answer=result["answer"],
             citation_required=result["citation_required"],
-            citation_limit=result["citation_limit"],
-            files_used=result["files_used"],
+            # citation_limit=result["citation_limit"],
+            # files_used=result["files_used"],
             citations=result["citations"],
             chunks_retrieved=result["chunks_retrieved"],
             session_id=request.session_id,

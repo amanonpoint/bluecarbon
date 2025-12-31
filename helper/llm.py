@@ -168,39 +168,127 @@ class LLMClient:
             response = self.llm.invoke(prompt)
             return self._parse_json_response(response.content)
 
+    def _extract_json_block(self, text: str) -> str | None:
+        """
+        Extract the first valid JSON object using brace counting.
+        Python-safe (no regex recursion).
+        """
+        start = text.find("{")
+        if start == -1:
+            return None
+
+        brace_count = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                brace_count += 1
+            elif text[i] == "}":
+                brace_count -= 1
+
+            if brace_count == 0:
+                return text[start:i + 1]
+
+        return None
+
+
     def _parse_json_response(self, content: str) -> Dict[str, Any]:
-        """Robust JSON parser - extracts JSON even from messy LLM output."""
         content = content.strip()
-        
-        # Method 1: Find any JSON block
+
         json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', content, re.DOTALL)
         if json_match:
             try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
+                parsed = json.loads(json_match.group())
+
+                # Hard guarantees
+                parsed.setdefault("used_chunk_ids", [])
+                parsed.setdefault("chunk_reasoning", {})
+                parsed.setdefault("citation_required", "no")
+                parsed.setdefault("answer", "")
+
+                # Enforce reasoning alignment
+                if set(parsed["used_chunk_ids"]) != set(parsed["chunk_reasoning"].keys()):
+                    raise ValueError("chunk_reasoning keys must match used_chunk_ids")
+
+                return parsed
+
+            except Exception:
                 pass
-        
-        # Method 2: Clean common LLM formatting junk
-        cleaned = re.sub(r'``````python|``````json|``````\n', '', content).strip()
-        cleaned = re.sub(r'^.*?(?=\{)', '', cleaned, flags=re.DOTALL)  # Remove text before {
-        cleaned = re.sub(r'(?<=\}).*?$', '', cleaned, flags=re.DOTALL)  # Remove text after }
-        
-        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', cleaned, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
-        
-        # Method 3: Fallback - extract key values manually
-        answer_match = re.search(r'"answer"[:\s]*"([^"]*)"', content)
-        citation_match = re.search(r'"citation_required"[:\s]*"([^"]*)"', content)
-        
-        fallback = {
-            "answer": answer_match.group(1) if answer_match else "Error parsing response.",
-            "citation_required": citation_match.group(1) if citation_match else "no",
-            "citation_limit": 0,
-            "files_used": 0
+
+        # Fallback (safe)
+        return {
+            "answer": "Error parsing response.",
+            "citation_required": "no",
+            "used_chunk_ids": [],
+            "chunk_reasoning": {}
         }
-        
-        return fallback
+
+
+    
+    
+
+    
+        # """
+        # Robust parser for LLM JSON responses.
+        # Expected format:
+        # {
+        # "answer": "...",
+        # "citation_required": "yes" | "no",
+        # "used_chunk_ids": ["chk_xxx", "chk_yyy"]
+        # }
+        # """
+        # content = content.strip()
+
+        # # ---------------------------
+        # # STEP 1: Extract JSON block
+        # # ---------------------------
+        # json_match = re.search(
+        #     r'\{(?:[^{}]|(?R))*\}',
+        #     content,
+        #     re.DOTALL
+        # )
+
+        # if json_match:
+        #     try:
+        #         data = json.loads(json_match.group())
+        #     except json.JSONDecodeError:
+        #         data = {}
+        # else:
+        #     data = {}
+
+        # # ---------------------------
+        # # STEP 2: Normalize fields
+        # # ---------------------------
+        # answer = str(data.get("answer", "")).strip()
+        # citation_required = str(data.get("citation_required", "no")).lower()
+
+        # used_chunk_ids = data.get("used_chunk_ids", [])
+
+        # # ---------------------------
+        # # STEP 3: Validate chunk_ids
+        # # ---------------------------
+        # if not isinstance(used_chunk_ids, list):
+        #     used_chunk_ids = []
+
+        # # Keep only valid-looking chunk IDs
+        # used_chunk_ids = [
+        #     cid for cid in used_chunk_ids
+        #     if isinstance(cid, str) and cid.startswith("chk_")
+        # ]
+
+        # # ---------------------------
+        # # STEP 4: Auto-correct logic
+        # # ---------------------------
+        # if citation_required != "yes" or not used_chunk_ids:
+        #     citation_required = "no"
+        #     used_chunk_ids = []
+
+        # # ---------------------------
+        # # STEP 5: Safe fallback
+        # # ---------------------------
+        # if not answer:
+        #     answer = "Not found in provided documents."
+
+        # return {
+        #     "answer": answer,
+        #     "citation_required": citation_required,
+        #     "used_chunk_ids": used_chunk_ids
+        # }

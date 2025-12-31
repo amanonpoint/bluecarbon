@@ -4,13 +4,43 @@ from langchain.tools import tool
 
 
 def build_context(chunks):
-    parts = []
+    """
+    Build LLM context with explicit file + chunk grounding.
+    """
+    from collections import defaultdict
+
+    files = defaultdict(list)
+
     for c in chunks:
         md = c.get("metadata", {})
-        header = md.get("header", md.get("subheader", ""))
-        page = md.get("page", "")
-        parts.append(f"[page {page} | {header}]\n{c.get('text','')}")
-    return "\n\n---\n\n".join(parts)
+        file_id = md.get("file_id", "unknown_file")
+        files[file_id].append(c)
+
+    parts = []
+
+    for file_id, file_chunks in files.items():
+        parts.append(f"\n=== FILE: {file_id} ===\n")
+
+        for c in file_chunks:
+            md = c.get("metadata", {})
+            chunk_id = md.get("chunk_id", "unknown_chunk")
+            header = md.get("header", "")
+            subheader = md.get("subheader", "")
+            page = md.get("page", "")
+
+            heading = " → ".join(
+                h for h in [header, subheader] if h
+            )
+
+            parts.append(
+                f"""[chunk_id: {chunk_id}]
+[page: {page} | {heading}]
+{c.get("text", "")}
+"""
+            )
+
+    return "\n---\n".join(parts)
+
 
 
 

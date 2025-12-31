@@ -82,8 +82,8 @@ class QueryResponse(BaseModel):
     query: str
     answer: str
     citation_required: bool
-    citation_limit: int
-    files_used: int
+    # citation_limit: int
+    # files_used: int
     citations: List[dict]
     chunks_retrieved: int
     session_id: str

@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from helper.llm import LLMClient
 from helper.retriver_engine import RetrieverEngine
 from helper.tools import build_context, chunks_to_sources
-from helper.prep_citation import create_section_html_from_chunk
+from helper.prep_citation import create_section_html_from_listchunk
 from helper.memory import SimpleMemoryManager  # Updated import
 
 load_dotenv()
@@ -18,7 +18,7 @@ class RagOrchestrator:
         collection_name: str = "knowledge_base_v1",
         embedding_model: str = "all-MiniLM-L12-v2",
         groq_model: str = "llama-3.3-70b-versatile",
-        prep_citations_func=create_section_html_from_chunk,
+        prep_citations_func=create_section_html_from_listchunk,
     ):
         self.llm_client = LLMClient(groq_model)
         self.retriever = RetrieverEngine(
@@ -45,85 +45,107 @@ class RagOrchestrator:
         retrieval = self.retriever.get_retrieval_context(query)
         chunks = retrieval["chunks"]
         context_text = build_context(chunks)
+        print(f"retrived context:{context_text}")
         
         # STEP 3: Create enhanced prompt
         if memory_context:
             prompt = f"""{memory_context}# DOCUMENT KNOWLEDGE
 {context_text}
 
-# CURRENT QUESTION
+# QUESTION
 {query}
 
-Answer based on both conversation history and document knowledge above.
-Be consistent with previous discussions.
+Answer ONLY if the answer is directly supported by the document knowledge above.
 
-SMART CITATION RULES:
-# 1. Answer ONLY if query is DIRECTLY in context
-# 2. Count UNIQUE file_id's in context:
-#    - 1 file → "files_used": 1, "citation_limit": 1
-#    - 2 files → "files_used": 2, "citation_limit": 2  
-#    - 3+ files → "files_used": 3, "citation_limit": 3
-# 3. Same file multiple chunks → count as 1 file
-# 4. citation_required: "yes" ONLY if answer uses context
+CHUNK CITATION RULES (VERY IMPORTANT):
+1. You MUST list the EXACT chunk_id values you used to generate the answer
+2. Only include chunk_ids that directly support the answer
+3. For EACH used chunk_id, explain WHY it was chosen:
+   - Reference the specific heading/subheading or concept
+   - Explain why other chunks were not relevant
+4. If answer does NOT use document knowledge:
+   - citation_required = "no"
+   - used_chunk_ids = []
+   - chunk_reasoning = {{}}
+5. Do NOT invent chunk_ids
+6. chunk_id values MUST come from DOCUMENT KNOWLEDGE
 
-# JSON ONLY - NO OTHER TEXT!
+JSON ONLY – NO OTHER TEXT
 
-Respond in this exact JSON format:
+Respond in this EXACT JSON format:
 {{
-  "answer": "Your detailed answer here...",
+  "answer": "Your answer here",
   "citation_required": "yes" or "no",
-  "citation_limit": 0,
-  "files_used": 0
+  "used_chunk_ids": [],
+  "chunk_reasoning": {{
+    "chunk_id": "Why this chunk supports the answer (mention heading/subheading)"
+  }}
 }}"""
+
+
         else:
-            prompt = f"""# DOCUMENT KNOWLEDGE
+            prompt = f"""{memory_context}# DOCUMENT KNOWLEDGE
 {context_text}
 
 # QUESTION
 {query}
 
-Answer based on the document knowledge above.
+Answer ONLY if the answer is directly supported by the document knowledge above.
 
-SMART CITATION RULES:
-# 1. Answer ONLY if query is DIRECTLY in context
-# 2. Count UNIQUE file_id's in context:
-#    - 1 file → "files_used": 1, "citation_limit": 1
-#    - 2 files → "files_used": 2, "citation_limit": 2  
-#    - 3+ files → "files_used": 3, "citation_limit": 3
-# 3. Same file multiple chunks → count as 1 file
-# 4. citation_required: "yes" ONLY if answer uses context
+CHUNK CITATION RULES (VERY IMPORTANT):
+1. You MUST list the EXACT chunk_id values you used to generate the answer
+2. Only include chunk_ids that directly support the answer
+3. For EACH used chunk_id, explain WHY it was chosen:
+   - Reference the specific heading/subheading or concept
+   - Explain why other chunks were not relevant
+4. If answer does NOT use document knowledge:
+   - citation_required = "no"
+   - used_chunk_ids = []
+   - chunk_reasoning = {{}}
+5. Do NOT invent chunk_ids
+6. chunk_id values MUST come from DOCUMENT KNOWLEDGE
 
-# JSON ONLY - NO OTHER TEXT!
+JSON ONLY – NO OTHER TEXT
 
-Respond in this exact JSON format:
+Respond in this EXACT JSON format:
 {{
-  "answer": "Your detailed answer here...",
+  "answer": "Your answer here",
   "citation_required": "yes" or "no",
-  "citation_limit": 0,
-  "files_used": 0
+  "used_chunk_ids": [],
+  "chunk_reasoning": {{
+    "chunk_id": "Why this chunk supports the answer (mention heading/subheading)"
+  }}
 }}"""
+
+
         
         # STEP 4: Generate response
         llm_response = self.llm_client.generate_json_response(prompt)
+        print(f"raw LLM response:\n{llm_response}")
         
         answer = llm_response.get("answer", "No answer generated")
-        citation_required = llm_response.get("citation_required", "no") == "yes"
-        citation_limit = int(llm_response.get("citation_limit", 0))
-        files_used = int(llm_response.get("files_used", 0))
-        
-        # STEP 5: Citations
+        used_chunk_ids = llm_response.get("used_chunk_ids", [])
+        citation_required = (
+            llm_response.get("citation_required") == "yes"
+            and len(used_chunk_ids) > 0
+        )
+
         citations = []
-        if citation_required and citation_limit > 0:
+
+        if citation_required:
             try:
-                citation_retrieval = self.retriever.get_retrieval_context(
-                    query,
-                    limit=citation_limit
-                )
-                citation_chunks = citation_retrieval["chunks"]
-                sources = chunks_to_sources(citation_chunks)
-                citations = self._prepare_citations(sources)
+                # THIS USES YOUR UPDATED FUNCTION
+                html_paths = create_section_html_from_listchunk(used_chunk_ids)
+
+                for cid, path in zip(used_chunk_ids, html_paths):
+                    citations.append({
+                        "chunk_id": cid,
+                        "citation_path": path
+                    })
+
             except Exception as e:
-                print(f"⚠ Citation error: {e}")
+                print(f"⚠ Citation generation failed: {e}")
+
         
         # STEP 6: Update memory
         if session_id:
@@ -133,8 +155,8 @@ Respond in this exact JSON format:
                 ai_response=answer,
                 metadata={
                     "citation_required": citation_required,
-                    "citation_limit": citation_limit,
-                    "files_used": files_used,
+                    # "citation_limit": citation_limit,
+                    # "files_used": files_used,
                     "citations_count": len(citations),
                     "chunks_retrieved": len(chunks)
                 }
@@ -145,8 +167,8 @@ Respond in this exact JSON format:
             "query": query,
             "answer": answer,
             "citation_required": citation_required,
-            "citation_limit": citation_limit,
-            "files_used": files_used,
+            # "citation_limit": citation_limit,
+            # "files_used": files_used,
             "citations": citations,
             "chunks_retrieved": len(chunks),
             "session_id": session_id,
